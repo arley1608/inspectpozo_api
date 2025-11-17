@@ -6,7 +6,7 @@ from .database import SessionLocal, engine, Base
 from . import models, schemas
 from .auth_utils import create_token_for_user, get_user_by_token
 
-# Crear tablas si no existen (NO borra datos existentes)
+# Crear tablas si no existen (NO borra datos ya existentes)
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
@@ -73,6 +73,7 @@ def login(
             detail="Usuario o contraseña incorrectos",
         )
 
+    # Genera un token aleatorio y lo guarda en memoria (auth_utils.TOKENS)
     token = create_token_for_user(user)
     return schemas.TokenResponse(access_token=token)
 
@@ -155,6 +156,8 @@ def crear_proyecto(
         "contratista": "...",
         "encargado": "..."
       }
+
+    Se crea un proyecto asociado al usuario dueño del token.
     """
 
     # 1) Validar token y obtener usuario dueño
@@ -174,7 +177,7 @@ def crear_proyecto(
     db.commit()
     db.refresh(proyecto)
 
-    # 3) Respuesta: al menos {id, nombre} para sync en Flutter
+    # 3) Respuesta: {id, nombre} para sync en Flutter
     return proyecto
 
 
@@ -186,8 +189,9 @@ def listar_proyectos(
     """
     Devuelve todos los proyectos del usuario dueño del token.
 
-    Flutter podrá llamar:
+    Flutter llama:
       GET /proyectos/?token=<TOKEN>
+    y recibe una lista de proyectos SOLO de ese usuario.
     """
 
     user = get_user_by_token(db, token)

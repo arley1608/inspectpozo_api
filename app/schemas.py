@@ -1,5 +1,5 @@
+from typing import Optional
 from pydantic import BaseModel
-from typing import Optional, List
 
 
 # ==========================
@@ -52,6 +52,10 @@ class ProjectCreate(BaseModel):
 
 
 class ProjectOut(BaseModel):
+    """
+    Respuesta mínima para creación de proyecto (sync del outbox):
+    Flutter solo necesita el id y el nombre para actualizar serverId.
+    """
     id: int
     nombre: str
 
@@ -60,6 +64,9 @@ class ProjectOut(BaseModel):
 
 
 class ProjectDetailOut(BaseModel):
+    """
+    Respuesta completa para listar proyectos en la app.
+    """
     id: int
     nombre: str
     contrato: Optional[str] = None

@@ -11,6 +11,7 @@ class Usuario(Base):
     contrasenia = Column(String, nullable=False)
     nombre = Column(String, nullable=False)
 
+    # relación uno-a-muchos con proyectos
     proyectos = relationship("Proyecto", back_populates="usuario")
 
 
@@ -24,7 +25,7 @@ class Proyecto(Base):
     contratista = Column(String, nullable=True)
     encargado = Column(String, nullable=True)
 
-    # 👇 debe coincidir con tu columna id_usuario bigint
+    # debe coincidir con tu columna id_usuario bigint en PostgreSQL
     id_usuario = Column(Integer, ForeignKey("usuario.id"), nullable=True)
 
     usuario = relationship("Usuario", back_populates="proyectos")
