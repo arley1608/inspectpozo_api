@@ -6,18 +6,18 @@ from .database import SessionLocal, engine, Base
 from . import models, schemas
 from .auth_utils import create_token_for_user, get_user_by_token
 
-# Crear tablas si no existen (NO borra datos ya existentes)
+# Crear tablas si no existen
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="InspectPozo API",
     version="2.0.0",
-    description="Backend para app Flutter con usuarios y proyectos",
+    description="Backend para app Flutter con usuarios, proyectos y estructuras hidráulicas",
 )
 
 
 # ==========================
-#       DEPENDENCIAS
+#       DEPENDENCIA DB
 # ==========================
 
 def get_db():
@@ -29,7 +29,7 @@ def get_db():
 
 
 # ==========================
-#         RUTAS BASE
+#        RUTAS BASE
 # ==========================
 
 @app.get("/")
@@ -51,13 +51,6 @@ def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
 ):
-    """
-    Flutter envía:
-      Content-Type: application/x-www-form-urlencoded
-      username=<usuario>
-      password=<contrasenia>
-    """
-
     user = (
         db.query(models.Usuario)
         .filter(
@@ -73,17 +66,12 @@ def login(
             detail="Usuario o contraseña incorrectos",
         )
 
-    # Genera un token aleatorio y lo guarda en memoria (auth_utils.TOKENS)
     token = create_token_for_user(user)
     return schemas.TokenResponse(access_token=token)
 
 
 @app.get("/auth/me", response_model=schemas.MeResponse)
 def me(token: str, db: Session = Depends(get_db)):
-    """
-    Flutter llama:
-      GET /auth/me?token=<TOKEN>
-    """
     user = get_user_by_token(db, token)
     return schemas.MeResponse(id=user.id, usuario=user.usuario, nombre=user.nombre)
 
@@ -97,15 +85,6 @@ def register_user(
     data: schemas.UserCreate,
     db: Session = Depends(get_db),
 ):
-    """
-    Flutter (sync de usuarios) envía JSON:
-      {
-        "usuario": "...",
-        "nombre": "...",
-        "contrasenia": "..."
-      }
-    """
-
     existing = (
         db.query(models.Usuario)
         .filter(models.Usuario.usuario == data.usuario)
@@ -145,25 +124,8 @@ def crear_proyecto(
     data: schemas.ProjectCreate,
     db: Session = Depends(get_db),
 ):
-    """
-    Flutter llama:
-      POST /proyectos/?token=<TOKEN>
-      body JSON:
-      {
-        "nombre": "...",
-        "contrato": "...",
-        "contratante": "...",
-        "contratista": "...",
-        "encargado": "..."
-      }
-
-    Se crea un proyecto asociado al usuario dueño del token.
-    """
-
-    # 1) Validar token y obtener usuario dueño
     user = get_user_by_token(db, token)
 
-    # 2) Crear proyecto asociado al usuario
     proyecto = models.Proyecto(
         nombre=data.nombre,
         contrato=data.contrato,
@@ -177,7 +139,6 @@ def crear_proyecto(
     db.commit()
     db.refresh(proyecto)
 
-    # 3) Respuesta: {id, nombre} para sync en Flutter
     return proyecto
 
 
@@ -186,14 +147,6 @@ def listar_proyectos(
     token: str,
     db: Session = Depends(get_db),
 ):
-    """
-    Devuelve todos los proyectos del usuario dueño del token.
-
-    Flutter llama:
-      GET /proyectos/?token=<TOKEN>
-    y recibe una lista de proyectos SOLO de ese usuario.
-    """
-
     user = get_user_by_token(db, token)
 
     proyectos = (
@@ -204,3 +157,84 @@ def listar_proyectos(
     )
 
     return proyectos
+
+
+@app.delete("/proyectos/{proyecto_id}")
+def eliminar_proyecto(
+    proyecto_id: int,
+    token: str,
+    db: Session = Depends(get_db),
+):
+    user = get_user_by_token(db, token)
+
+    proyecto = (
+        db.query(models.Proyecto)
+        .filter(
+            models.Proyecto.id == proyecto_id,
+            models.Proyecto.id_usuario == user.id,
+        )
+        .first()
+    )
+
+    if not proyecto:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Proyecto no encontrado",
+        )
+
+    db.delete(proyecto)
+    db.commit()
+
+    return {"ok": True}
+
+
+# ==========================
+#   ESTRUCTURAS HIDRÁULICAS
+# ==========================
+
+@app.post("/estructuras/", response_model=schemas.EstructuraHidraulicaOut)
+def crear_estructura_hidraulica(
+    data: schemas.EstructuraHidraulicaCreate,
+    token: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Crea una estructura hidráulica asociada a un proyecto del usuario.
+    """
+
+    user = get_user_by_token(db, token)
+
+    # Validar que el proyecto exista y sea del usuario
+    proyecto = (
+        db.query(models.Proyecto)
+        .filter(
+            models.Proyecto.id == data.id_proyecto,
+            models.Proyecto.id_usuario == user.id,
+        )
+        .first()
+    )
+
+    if not proyecto:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Proyecto no encontrado o no pertenece al usuario",
+        )
+
+    estructura = models.EstructuraHidraulica(
+        id=data.id,
+        tipo=data.tipo,
+        fecha_inspeccion=data.fecha_inspeccion,
+        hora_inspeccion=data.hora_inspeccion,
+        clima_inspeccion=data.clima_inspeccion,
+        tipo_via=data.tipo_via,
+        tipo_sistema=data.tipo_sistema,
+        material=data.material,
+        observaciones=data.observaciones,
+        id_proyecto=data.id_proyecto,
+    )
+
+    db.add(estructura)
+    db.commit()
+    db.refresh(estructura)
+
+    return estructura
