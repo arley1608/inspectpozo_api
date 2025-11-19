@@ -192,6 +192,62 @@ def eliminar_proyecto(
 #   ESTRUCTURAS HIDRÁULICAS
 # ==========================
 
+@app.get("/estructuras/next-id")
+def get_next_estructura_id(
+    tipo: str,
+    token: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Genera el siguiente ID disponible para una estructura hidráulica.
+
+    El ID se basa en el tipo de estructura:
+
+    - Pozo     -> PZ-001, PZ-002, ...
+    - Sumidero -> SM-001, SM-002, ...
+    - Otros    -> ES-001, ES-002, ...
+    """
+
+    # Validar el token y obtener usuario
+    user = get_user_by_token(db, token)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token inválido o usuario no encontrado",
+        )
+
+    # Prefijos según tipo
+    prefix_map = {
+        "Pozo": "PZ",
+        "Sumidero": "SM",
+    }
+    prefix = prefix_map.get(tipo, "ES")
+
+    # Buscar IDs existentes con ese prefijo
+    rows = (
+        db.query(models.EstructuraHidraulica.id)
+        .filter(models.EstructuraHidraulica.id.like(f"{prefix}-%"))
+        .all()
+    )
+
+    max_num = 0
+    for (sid,) in rows:
+        try:
+            # asumimos formato PREFIX-###, ej: PZ-001
+            num_part = sid.split("-", 1)[1]
+            num = int(num_part)
+            if num > max_num:
+                max_num = num
+        except (IndexError, ValueError):
+            # Si algún ID no cumple el patrón, lo ignoramos
+            continue
+
+    next_num = max_num + 1
+    new_id = f"{prefix}-{next_num:03d}"
+
+    return {"id": new_id}
+
+
 @app.post("/estructuras/", response_model=schemas.EstructuraHidraulicaOut)
 def crear_estructura_hidraulica(
     data: schemas.EstructuraHidraulicaCreate,
