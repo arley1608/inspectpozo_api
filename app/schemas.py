@@ -1,8 +1,6 @@
 from datetime import date, time
 from typing import Optional, List
-
 from pydantic import BaseModel
-
 
 # ==========================
 #         AUTH / USERS
@@ -61,8 +59,17 @@ class ProjectOut(ProjectBase):
 
 
 class ProjectDetailOut(ProjectOut):
-    """Ahora mismo igual a ProjectOut, pero separado por si luego agregas más campos."""
+    """Por si luego necesitas más info diferenciada."""
     pass
+
+
+class ProjectUpdate(BaseModel):
+    """Campos opcionales para actualización parcial."""
+    nombre: Optional[str] = None
+    contrato: Optional[str] = None
+    contratante: Optional[str] = None
+    contratista: Optional[str] = None
+    encargado: Optional[str] = None
 
 
 # ==========================
@@ -111,7 +118,6 @@ class EstructuraHidraulicaBase(BaseModel):
 
 
 class EstructuraHidraulicaCreate(EstructuraHidraulicaBase):
-    """Schema para crear estructura: mismo contenido que el base."""
     pass
 
 

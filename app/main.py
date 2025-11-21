@@ -6,13 +6,12 @@ from .database import SessionLocal, engine, Base
 from . import models, schemas
 from .auth_utils import create_token_for_user, get_user_by_token
 
-# Crear tablas si no existen
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="InspectPozo API",
-    version="2.0.0",
-    description="Backend para app InspectPozo (usuarios, proyectos y estructuras hidráulicas).",
+    version="2.1.0",
+    description="Backend para app InspectPozo (usuarios, proyectos, estructuras hidráulicas).",
 )
 
 
@@ -181,6 +180,47 @@ def eliminar_proyecto(
     return {"ok": True}
 
 
+@app.put("/proyectos/{proyecto_id}", response_model=schemas.ProjectOut)
+def actualizar_proyecto(
+    proyecto_id: int,
+    token: str,
+    data: schemas.ProjectUpdate,
+    db: Session = Depends(get_db),
+):
+    user = get_user_by_token(db, token)
+
+    proyecto = (
+        db.query(models.Proyecto)
+        .filter(
+            models.Proyecto.id == proyecto_id,
+            models.Proyecto.id_usuario == user.id,
+        )
+        .first()
+    )
+
+    if not proyecto:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Proyecto no encontrado o no pertenece al usuario",
+        )
+
+    if data.nombre is not None:
+        proyecto.nombre = data.nombre
+    if data.contrato is not None:
+        proyecto.contrato = data.contrato
+    if data.contratante is not None:
+        proyecto.contratante = data.contratante
+    if data.contratista is not None:
+        proyecto.contratista = data.contratista
+    if data.encargado is not None:
+        proyecto.encargado = data.encargado
+
+    db.commit()
+    db.refresh(proyecto)
+
+    return proyecto
+
+
 # ==========================
 #   ESTRUCTURAS HIDRÁULICAS
 # ==========================
@@ -191,15 +231,6 @@ def get_next_estructura_id(
     token: str,
     db: Session = Depends(get_db),
 ):
-    """
-    Genera el siguiente ID disponible para una estructura hidráulica.
-
-    Formato:
-    - Pozo     -> pz0001, pz0002, ...
-    - Sumidero -> sm0001, sm0002, ...
-    - Otros    -> es0001, es0002, ...
-    """
-
     user = get_user_by_token(db, token)
     if not user:
         raise HTTPException(
@@ -243,11 +274,6 @@ def crear_estructura_hidraulica(
     token: str,
     db: Session = Depends(get_db),
 ):
-    """
-    Crea una estructura hidráulica asociada a un proyecto del usuario,
-    usando TODOS los campos definidos en la tabla estructura_hidraulica.
-    """
-
     user = get_user_by_token(db, token)
 
     proyecto = (
@@ -315,10 +341,6 @@ def listar_estructuras_por_proyecto(
     id_proyecto: int,
     db: Session = Depends(get_db),
 ):
-    """
-    Lista las estructuras hidráulicas de un proyecto del usuario.
-    """
-
     user = get_user_by_token(db, token)
 
     proyecto = (
