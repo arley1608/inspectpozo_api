@@ -12,7 +12,7 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title="InspectPozo API",
     version="2.0.0",
-    description="Backend para app Flutter con usuarios, proyectos y estructuras hidráulicas",
+    description="Backend para app InspectPozo (usuarios, proyectos y estructuras hidráulicas).",
 )
 
 
@@ -26,15 +26,6 @@ def get_db():
         yield db
     finally:
         db.close()
-
-
-# ==========================
-#        RUTAS BASE
-# ==========================
-
-@app.get("/")
-def root():
-    return {"message": "InspectPozo API conectada a PostgreSQL"}
 
 
 @app.get("/ping")
@@ -71,14 +62,17 @@ def login(
 
 
 @app.get("/auth/me", response_model=schemas.MeResponse)
-def me(token: str, db: Session = Depends(get_db)):
+def get_me(
+    token: str,
+    db: Session = Depends(get_db),
+):
     user = get_user_by_token(db, token)
-    return schemas.MeResponse(id=user.id, usuario=user.usuario, nombre=user.nombre)
+    return schemas.MeResponse(
+        id=user.id,
+        usuario=user.usuario,
+        nombre=user.nombre,
+    )
 
-
-# ==========================
-#        USUARIOS
-# ==========================
 
 @app.post("/auth/register", response_model=schemas.UserOut)
 def register_user(
@@ -152,7 +146,6 @@ def listar_proyectos(
     proyectos = (
         db.query(models.Proyecto)
         .filter(models.Proyecto.id_usuario == user.id)
-        .order_by(models.Proyecto.id.desc())
         .all()
     )
 
@@ -201,14 +194,12 @@ def get_next_estructura_id(
     """
     Genera el siguiente ID disponible para una estructura hidráulica.
 
-    El ID se basa en el tipo de estructura:
-
-    - Pozo     -> PZ-001, PZ-002, ...
-    - Sumidero -> SM-001, SM-002, ...
-    - Otros    -> ES-001, ES-002, ...
+    Formato:
+    - Pozo     -> pz0001, pz0002, ...
+    - Sumidero -> sm0001, sm0002, ...
+    - Otros    -> es0001, es0002, ...
     """
 
-    # Validar el token y obtener usuario
     user = get_user_by_token(db, token)
     if not user:
         raise HTTPException(
@@ -216,34 +207,32 @@ def get_next_estructura_id(
             detail="Token inválido o usuario no encontrado",
         )
 
-    # Prefijos según tipo
-    prefix_map = {
-        "Pozo": "PZ",
-        "Sumidero": "SM",
-    }
-    prefix = prefix_map.get(tipo, "ES")
+    tipo_norm = tipo.strip().lower()
+    if tipo_norm == "pozo":
+        prefix = "pz"
+    elif tipo_norm == "sumidero":
+        prefix = "sm"
+    else:
+        prefix = "es"
 
-    # Buscar IDs existentes con ese prefijo
     rows = (
         db.query(models.EstructuraHidraulica.id)
-        .filter(models.EstructuraHidraulica.id.like(f"{prefix}-%"))
+        .filter(models.EstructuraHidraulica.id.ilike(f"{prefix}%"))
         .all()
     )
 
     max_num = 0
     for (sid,) in rows:
         try:
-            # asumimos formato PREFIX-###, ej: PZ-001
-            num_part = sid.split("-", 1)[1]
+            num_part = sid[len(prefix):]
             num = int(num_part)
             if num > max_num:
                 max_num = num
         except (IndexError, ValueError):
-            # Si algún ID no cumple el patrón, lo ignoramos
             continue
 
     next_num = max_num + 1
-    new_id = f"{prefix}-{next_num:03d}"
+    new_id = f"{prefix}{next_num:04d}"
 
     return {"id": new_id}
 
@@ -255,12 +244,12 @@ def crear_estructura_hidraulica(
     db: Session = Depends(get_db),
 ):
     """
-    Crea una estructura hidráulica asociada a un proyecto del usuario.
+    Crea una estructura hidráulica asociada a un proyecto del usuario,
+    usando TODOS los campos definidos en la tabla estructura_hidraulica.
     """
 
     user = get_user_by_token(db, token)
 
-    # Validar que el proyecto exista y sea del usuario
     proyecto = (
         db.query(models.Proyecto)
         .filter(
@@ -279,14 +268,35 @@ def crear_estructura_hidraulica(
     estructura = models.EstructuraHidraulica(
         id=data.id,
         tipo=data.tipo,
+        geometria=data.geometria,
         fecha_inspeccion=data.fecha_inspeccion,
         hora_inspeccion=data.hora_inspeccion,
         clima_inspeccion=data.clima_inspeccion,
         tipo_via=data.tipo_via,
         tipo_sistema=data.tipo_sistema,
         material=data.material,
+        cono_reduccion=data.cono_reduccion,
+        altura_cono=data.altura_cono,
+        profundidad_pozo=data.profundidad_pozo,
+        diametro_camara=data.diametro_camara,
+        sedimentacion=data.sedimentacion,
+        cobertura_tuberia_salida=data.cobertura_tuberia_salida,
+        deposito_predomina=data.deposito_predomina,
+        flujo_represado=data.flujo_represado,
+        nivel_cubre_cotasalida=data.nivel_cubre_cotasalida,
+        cota_estructura=data.cota_estructura,
+        condiciones_investiga=data.condiciones_investiga,
         observaciones=data.observaciones,
+        tipo_sumidero=data.tipo_sumidero,
+        ancho_sumidero=data.ancho_sumidero,
+        largo_sumidero=data.largo_sumidero,
+        altura_sumidero=data.altura_sumidero,
+        ancho_rejilla=data.ancho_rejilla,
+        largo_rejilla=data.largo_rejilla,
+        altura_rejilla=data.altura_rejilla,
+        material_rejilla=data.material_rejilla,
         id_proyecto=data.id_proyecto,
+        material_sumidero=data.material_sumidero,
     )
 
     db.add(estructura)
@@ -294,3 +304,42 @@ def crear_estructura_hidraulica(
     db.refresh(estructura)
 
     return estructura
+
+
+@app.get(
+    "/estructuras/",
+    response_model=list[schemas.EstructuraHidraulicaOut],
+)
+def listar_estructuras_por_proyecto(
+    token: str,
+    id_proyecto: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Lista las estructuras hidráulicas de un proyecto del usuario.
+    """
+
+    user = get_user_by_token(db, token)
+
+    proyecto = (
+        db.query(models.Proyecto)
+        .filter(
+            models.Proyecto.id == id_proyecto,
+            models.Proyecto.id_usuario == user.id,
+        )
+        .first()
+    )
+
+    if not proyecto:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Proyecto no encontrado o no pertenece al usuario",
+        )
+
+    estructuras = (
+        db.query(models.EstructuraHidraulica)
+        .filter(models.EstructuraHidraulica.id_proyecto == id_proyecto)
+        .all()
+    )
+
+    return estructuras
