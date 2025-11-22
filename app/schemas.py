@@ -107,6 +107,7 @@ class EstructuraHidraulicaBase(BaseModel):
     ancho_sumidero: Optional[float] = None
     largo_sumidero: Optional[float] = None
     altura_sumidero: Optional[float] = None
+    material_sumidero: Optional[str] = None
 
     ancho_rejilla: Optional[float] = None
     largo_rejilla: Optional[float] = None
@@ -114,7 +115,6 @@ class EstructuraHidraulicaBase(BaseModel):
     material_rejilla: Optional[str] = None
 
     id_proyecto: int
-    material_sumidero: Optional[str] = None
 
 
 class EstructuraHidraulicaCreate(EstructuraHidraulicaBase):
@@ -124,3 +124,49 @@ class EstructuraHidraulicaCreate(EstructuraHidraulicaBase):
 class EstructuraHidraulicaOut(EstructuraHidraulicaBase):
     class Config:
         from_attributes = True
+
+
+class EstructuraHidraulicaUpdate(BaseModel):
+    """
+    Campos opcionales para actualización parcial de una estructura
+    hidráulica (usado en PUT /estructuras/{id}).
+
+    Aquí se permiten TODOS los campos de la tabla, excepto el ID.
+    """
+    tipo: Optional[str] = None
+
+    geometria: Optional[str] = None
+    fecha_inspeccion: Optional[date] = None
+    hora_inspeccion: Optional[time] = None
+    clima_inspeccion: Optional[str] = None
+    tipo_via: Optional[str] = None
+
+    tipo_sistema: Optional[str] = None
+    material: Optional[str] = None
+
+    cono_reduccion: Optional[bool] = None
+    altura_cono: Optional[float] = None
+    profundidad_pozo: Optional[float] = None
+    diametro_camara: Optional[float] = None
+
+    sedimentacion: Optional[bool] = None
+    cobertura_tuberia_salida: Optional[bool] = None
+    deposito_predomina: Optional[str] = None
+    flujo_represado: Optional[bool] = None
+    nivel_cubre_cotasalida: Optional[bool] = None
+    cota_estructura: Optional[float] = None
+    condiciones_investiga: Optional[str] = None
+    observaciones: Optional[str] = None
+
+    tipo_sumidero: Optional[str] = None
+    ancho_sumidero: Optional[float] = None
+    largo_sumidero: Optional[float] = None
+    altura_sumidero: Optional[float] = None
+    material_sumidero: Optional[str] = None
+
+    ancho_rejilla: Optional[float] = None
+    largo_rejilla: Optional[float] = None
+    altura_rejilla: Optional[float] = None
+    material_rejilla: Optional[str] = None
+
+    id_proyecto: Optional[int] = None

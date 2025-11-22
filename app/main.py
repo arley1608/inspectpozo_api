@@ -375,7 +375,6 @@ def eliminar_estructura_hidraulica(
 ):
     user = get_user_by_token(db, token)
 
-    # Buscar la estructura por su ID (pz0001, sm0001, etc.)
     estructura = (
         db.query(models.EstructuraHidraulica)
         .filter(models.EstructuraHidraulica.id == estructura_id)
@@ -388,20 +387,123 @@ def eliminar_estructura_hidraulica(
             detail="Estructura no encontrada",
         )
 
-    # Opcional: si quieres asegurar que solo pueda borrarla
-    # el dueño del proyecto, puedes validar algo como:
-    #
-    # proyecto = db.query(models.Proyecto).filter(
-    #     models.Proyecto.id == estructura.id_proyecto,
-    #     models.Proyecto.id_usuario == user.id,
-    # ).first()
-    # if not proyecto:
-    #     raise HTTPException(
-    #         status_code=status.HTTP_403_FORBIDDEN,
-    #         detail="No tienes permisos para eliminar esta estructura",
-    #     )
-
     db.delete(estructura)
     db.commit()
 
     return {"ok": True}
+
+
+@app.put("/estructuras/{estructura_id}", response_model=schemas.EstructuraHidraulicaOut)
+def actualizar_estructura_hidraulica(
+    estructura_id: str,
+    token: str,
+    data: schemas.EstructuraHidraulicaUpdate,
+    db: Session = Depends(get_db),
+):
+    user = get_user_by_token(db, token)
+
+    # Buscar la estructura y verificar que su proyecto pertenezca al usuario
+    estructura = (
+        db.query(models.EstructuraHidraulica)
+        .join(models.Proyecto, models.EstructuraHidraulica.id_proyecto == models.Proyecto.id)
+        .filter(
+            models.EstructuraHidraulica.id == estructura_id,
+            models.Proyecto.id_usuario == user.id,
+        )
+        .first()
+    )
+
+    if not estructura:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Estructura no encontrada o no pertenece al usuario",
+        )
+
+    # ---- Actualizar TODOS los campos excepto el id ----
+
+    if data.tipo is not None:
+        estructura.tipo = data.tipo
+
+    if data.geometria is not None:
+        estructura.geometria = data.geometria
+    if data.fecha_inspeccion is not None:
+        estructura.fecha_inspeccion = data.fecha_inspeccion
+    if data.hora_inspeccion is not None:
+        estructura.hora_inspeccion = data.hora_inspeccion
+    if data.clima_inspeccion is not None:
+        estructura.clima_inspeccion = data.clima_inspeccion
+    if data.tipo_via is not None:
+        estructura.tipo_via = data.tipo_via
+
+    if data.tipo_sistema is not None:
+        estructura.tipo_sistema = data.tipo_sistema
+    if data.material is not None:
+        estructura.material = data.material
+
+    if data.cono_reduccion is not None:
+        estructura.cono_reduccion = data.cono_reduccion
+    if data.altura_cono is not None:
+        estructura.altura_cono = data.altura_cono
+    if data.profundidad_pozo is not None:
+        estructura.profundidad_pozo = data.profundidad_pozo
+    if data.diametro_camara is not None:
+        estructura.diametro_camara = data.diametro_camara
+
+    if data.sedimentacion is not None:
+        estructura.sedimentacion = data.sedimentacion
+    if data.cobertura_tuberia_salida is not None:
+        estructura.cobertura_tuberia_salida = data.cobertura_tuberia_salida
+    if data.deposito_predomina is not None:
+        estructura.deposito_predomina = data.deposito_predomina
+    if data.flujo_represado is not None:
+        estructura.flujo_represado = data.flujo_represado
+    if data.nivel_cubre_cotasalida is not None:
+        estructura.nivel_cubre_cotasalida = data.nivel_cubre_cotasalida
+    if data.cota_estructura is not None:
+        estructura.cota_estructura = data.cota_estructura
+    if data.condiciones_investiga is not None:
+        estructura.condiciones_investiga = data.condiciones_investiga
+    if data.observaciones is not None:
+        estructura.observaciones = data.observaciones
+
+    if data.tipo_sumidero is not None:
+        estructura.tipo_sumidero = data.tipo_sumidero
+    if data.ancho_sumidero is not None:
+        estructura.ancho_sumidero = data.ancho_sumidero
+    if data.largo_sumidero is not None:
+        estructura.largo_sumidero = data.largo_sumidero
+    if data.altura_sumidero is not None:
+        estructura.altura_sumidero = data.altura_sumidero
+    if data.material_sumidero is not None:
+        estructura.material_sumidero = data.material_sumidero
+
+    if data.ancho_rejilla is not None:
+        estructura.ancho_rejilla = data.ancho_rejilla
+    if data.largo_rejilla is not None:
+        estructura.largo_rejilla = data.largo_rejilla
+    if data.altura_rejilla is not None:
+        estructura.altura_rejilla = data.altura_rejilla
+    if data.material_rejilla is not None:
+        estructura.material_rejilla = data.material_rejilla
+
+    if data.id_proyecto is not None:
+        # Validar que el nuevo proyecto también sea del mismo usuario
+        proyecto_nuevo = (
+            db.query(models.Proyecto)
+            .filter(
+                models.Proyecto.id == data.id_proyecto,
+                models.Proyecto.id_usuario == user.id,
+            )
+            .first()
+        )
+        if not proyecto_nuevo:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Proyecto destino no encontrado o no pertenece al usuario",
+            )
+        estructura.id_proyecto = data.id_proyecto
+
+    db.commit()
+    db.refresh(estructura)
+
+    return estructura
