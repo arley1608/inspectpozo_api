@@ -365,3 +365,43 @@ def listar_estructuras_por_proyecto(
     )
 
     return estructuras
+
+
+@app.delete("/estructuras/{estructura_id}")
+def eliminar_estructura_hidraulica(
+    estructura_id: str,
+    token: str,
+    db: Session = Depends(get_db),
+):
+    user = get_user_by_token(db, token)
+
+    # Buscar la estructura por su ID (pz0001, sm0001, etc.)
+    estructura = (
+        db.query(models.EstructuraHidraulica)
+        .filter(models.EstructuraHidraulica.id == estructura_id)
+        .first()
+    )
+
+    if not estructura:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Estructura no encontrada",
+        )
+
+    # Opcional: si quieres asegurar que solo pueda borrarla
+    # el dueño del proyecto, puedes validar algo como:
+    #
+    # proyecto = db.query(models.Proyecto).filter(
+    #     models.Proyecto.id == estructura.id_proyecto,
+    #     models.Proyecto.id_usuario == user.id,
+    # ).first()
+    # if not proyecto:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_403_FORBIDDEN,
+    #         detail="No tienes permisos para eliminar esta estructura",
+    #     )
+
+    db.delete(estructura)
+    db.commit()
+
+    return {"ok": True}
