@@ -729,3 +729,164 @@ def listar_tuberias_por_estructura(
     tuberias = q.all()
 
     return tuberias
+
+
+@app.delete("/tuberias/{tuberia_id}")
+def eliminar_tuberia(
+    tuberia_id: str,
+    token: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Elimina una tubería si pertenece a algún proyecto del usuario.
+    """
+    user = get_user_by_token(db, token)
+
+    # Buscar la tubería y verificar que la estructura de inicio
+    # esté en un proyecto del usuario
+    tuberia = (
+        db.query(models.Tuberia)
+        .join(
+            models.EstructuraHidraulica,
+            models.Tuberia.id_estructura_inicio == models.EstructuraHidraulica.id,
+        )
+        .join(
+            models.Proyecto,
+            models.EstructuraHidraulica.id_proyecto == models.Proyecto.id,
+        )
+        .filter(
+            models.Tuberia.id == tuberia_id,
+            models.Proyecto.id_usuario == user.id,
+        )
+        .first()
+    )
+
+    if not tuberia:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tubería no encontrada o no pertenece a proyectos del usuario",
+        )
+
+    db.delete(tuberia)
+    db.commit()
+
+    return {"ok": True}
+
+
+@app.put("/tuberias/{tuberia_id}", response_model=schemas.PipeOut)
+def actualizar_tuberia(
+    tuberia_id: str,
+    data: schemas.PipeUpdate,
+    token: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Actualiza una tubería existente. Mantiene la lógica de cálculo de:
+      cota_clave_inicio = cota_estructura_inicio - profundidad_clave_inicio
+      cota_clave_destino = cota_estructura_destino - profundidad_clave_destino
+    siempre que existan cota_estructura y profundidad_clave;
+    en caso contrario, usa los valores enviados en el body.
+    """
+    user = get_user_by_token(db, token)
+
+    # Verificar que la tubería pertenezca a un proyecto del usuario
+    tuberia = (
+        db.query(models.Tuberia)
+        .join(
+            models.EstructuraHidraulica,
+            models.Tuberia.id_estructura_inicio == models.EstructuraHidraulica.id,
+        )
+        .join(
+            models.Proyecto,
+            models.EstructuraHidraulica.id_proyecto == models.Proyecto.id,
+        )
+        .filter(
+            models.Tuberia.id == tuberia_id,
+            models.Proyecto.id_usuario == user.id,
+        )
+        .first()
+    )
+
+    if not tuberia:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tubería no encontrada o no pertenece a proyectos del usuario",
+        )
+
+    # Estructuras de inicio y destino para recálculo de cotas
+    est_inicio = db.query(models.EstructuraHidraulica).get(
+        tuberia.id_estructura_inicio
+    )
+    est_dest = db.query(models.EstructuraHidraulica).get(
+        tuberia.id_estructura_destino
+    )
+
+    # --- Actualizar campos simples ---
+
+    if data.diametro is not None:
+        tuberia.diametro = data.diametro
+    if data.material is not None:
+        tuberia.material = data.material
+    if data.flujo is not None:
+        tuberia.flujo = data.flujo
+    if data.estado is not None:
+        tuberia.estado = data.estado
+    if data.sedimento is not None:
+        tuberia.sedimento = data.sedimento
+
+    # --- Inicio: profundidades y cotas ---
+
+    if data.profundidad_clave_inicio is not None:
+        tuberia.profundidad_clave_inicio = data.profundidad_clave_inicio
+    if data.profundidad_batea_inicio is not None:
+        tuberia.profundidad_batea_inicio = data.profundidad_batea_inicio
+
+    if data.cota_batea_inicio is not None:
+        tuberia.cota_batea_inicio = data.cota_batea_inicio
+
+    # cota_clave_inicio: preferimos recálculo si hay cota_estructura y profundidad
+    if (
+        est_inicio is not None
+        and est_inicio.cota_estructura is not None
+        and tuberia.profundidad_clave_inicio is not None
+    ):
+        tuberia.cota_clave_inicio = (
+            est_inicio.cota_estructura - tuberia.profundidad_clave_inicio
+        )
+    elif data.cota_clave_inicio is not None:
+        tuberia.cota_clave_inicio = data.cota_clave_inicio
+
+    # --- Destino: profundidades y cotas ---
+
+    if data.profundidad_clave_destino is not None:
+        tuberia.profundidad_clave_destino = data.profundidad_clave_destino
+    if data.profundidad_batea_destino is not None:
+        tuberia.profundidad_batea_destino = data.profundidad_batea_destino
+
+    if data.cota_batea_destino is not None:
+        tuberia.cota_batea_destino = data.cota_batea_destino
+
+    if (
+        est_dest is not None
+        and est_dest.cota_estructura is not None
+        and tuberia.profundidad_clave_destino is not None
+    ):
+        tuberia.cota_clave_destino = (
+            est_dest.cota_estructura - tuberia.profundidad_clave_destino
+        )
+    elif data.cota_clave_destino is not None:
+        tuberia.cota_clave_destino = data.cota_clave_destino
+
+    # --- Otros campos ---
+
+    if data.grados is not None:
+        tuberia.grados = data.grados
+    if data.observaciones is not None:
+        tuberia.observaciones = data.observaciones
+
+    # Nota: no se modifican id_estructura_inicio, id_estructura_destino ni geometría.
+
+    db.commit()
+    db.refresh(tuberia)
+
+    return tuberia

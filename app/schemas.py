@@ -179,9 +179,9 @@ class EstructuraHidraulicaUpdate(BaseModel):
 class PipeBase(BaseModel):
     id: str
 
-    diametro: Optional[float] = None
+    diametro: Optional[float] = None          # almacenado en pulgadas
     material: Optional[str] = None
-    flujo: Optional[bool] = None
+    flujo: Optional[bool] = None              # ahora booleano
     estado: Optional[str] = None
     sedimento: bool = False
 
@@ -214,3 +214,30 @@ class PipeOut(PipeBase):
     class Config:
         from_attributes = True
 
+
+class PipeUpdate(BaseModel):
+    """
+    Campos opcionales para actualización parcial de una tubería
+    (usado en PUT /tuberias/{tuberia_id}).
+    No se permite cambiar id, id_estructura_inicio, id_estructura_destino
+    ni geometría desde este esquema.
+    """
+
+    diametro: Optional[float] = None
+    material: Optional[str] = None
+    flujo: Optional[bool] = None
+    estado: Optional[str] = None
+    sedimento: Optional[bool] = None
+
+    cota_clave_inicio: Optional[float] = None
+    cota_batea_inicio: Optional[float] = None
+    profundidad_clave_inicio: Optional[float] = None
+    profundidad_batea_inicio: Optional[float] = None
+
+    cota_clave_destino: Optional[float] = None
+    cota_batea_destino: Optional[float] = None
+    profundidad_clave_destino: Optional[float] = None
+    profundidad_batea_destino: Optional[float] = None
+
+    grados: Optional[float] = None
+    observaciones: Optional[str] = None
