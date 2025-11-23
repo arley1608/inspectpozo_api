@@ -1,6 +1,17 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import (
+    FastAPI,
+    Depends,
+    HTTPException,
+    status,
+    UploadFile,
+    File,
+    Form,
+)
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
+from sqlalchemy import text
+from typing import Tuple
+import hashlib
 
 from .database import SessionLocal, engine, Base
 from . import models, schemas
@@ -30,6 +41,50 @@ def get_db():
 @app.get("/ping")
 def ping():
     return {"ping": "pong"}
+
+
+# ==========================
+#   HELPER WKT PARA TUBERÍAS
+# ==========================
+
+def _parse_point_wkt(wkt: str) -> Tuple[float, float]:
+    """
+    Parsea un WKT tipo 'POINT(x y)' y devuelve (x, y).
+    Lanza ValueError si el formato no es válido.
+    """
+    if not wkt:
+        raise ValueError("WKT vacío")
+
+    txt = wkt.strip()
+    if not txt.lower().startswith("point(") or not txt.endswith(")"):
+        raise ValueError(f"Formato WKT no soportado: {txt}")
+
+    # contenido entre paréntesis
+    inner = txt[txt.find("(") + 1: -1].strip()
+    # Admitimos separador coma o espacio
+    parts = inner.replace(",", " ").split()
+    if len(parts) != 2:
+        raise ValueError(f"POINT debe tener 2 coordenadas: {inner}")
+
+    x = float(parts[0])
+    y = float(parts[1])
+    return x, y
+
+
+def _get_point_from_structure(db: Session, estructura_id: str) -> Tuple[float, float]:
+    """
+    Obtiene la geometría de una estructura como WKT usando ST_AsText
+    (soporta columnas geometry/WKB) y devuelve (x, y) del POINT.
+    """
+    wkt = db.execute(
+        text("SELECT ST_AsText(geometria) FROM estructura_hidraulica WHERE id = :id"),
+        {"id": estructura_id},
+    ).scalar()
+
+    if not wkt:
+        raise ValueError(f"Estructura {estructura_id} sin geometría o no existe")
+
+    return _parse_point_wkt(wkt)
 
 
 # ==========================
@@ -507,3 +562,154 @@ def actualizar_estructura_hidraulica(
     db.refresh(estructura)
 
     return estructura
+
+
+# ==========================
+#         TUBERÍAS
+# ==========================
+
+@app.post("/tuberias/", response_model=schemas.PipeOut)
+def crear_tuberia(
+    data: schemas.PipeCreate,
+    token: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Crea una tubería entre dos estructuras hidráulicas.
+    La geometría se construye automáticamente como LINESTRING
+    entre los POINT de inicio y destino usando ST_AsText(geometria)
+    para soportar columnas geometry/WKB.
+    """
+    user = get_user_by_token(db, token)
+
+    # 1) Obtener estructuras de inicio y destino
+    est_inicio = db.query(models.EstructuraHidraulica).get(
+        data.id_estructura_inicio
+    )
+    est_dest = db.query(models.EstructuraHidraulica).get(
+        data.id_estructura_destino
+    )
+
+    if not est_inicio or not est_dest:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Estructura de inicio o destino no encontrada",
+        )
+
+    # 2) Verificar que ambas estructuras pertenezcan a proyectos del usuario
+    proyectos_ids_usuario = {
+        p.id
+        for p in db.query(models.Proyecto)
+        .filter(models.Proyecto.id_usuario == user.id)
+        .all()
+    }
+
+    if (
+        est_inicio.id_proyecto not in proyectos_ids_usuario
+        or est_dest.id_proyecto not in proyectos_ids_usuario
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Las estructuras no pertenecen a proyectos del usuario",
+        )
+
+    # 3) Construir geometría de la tubería (LINESTRING) a partir de las geometrías de las estructuras
+    try:
+        x1, y1 = _get_point_from_structure(db, est_inicio.id)
+        x2, y2 = _get_point_from_structure(db, est_dest.id)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "No se pudo construir la geometría de la tubería. "
+                "Verifica que las estructuras tengan geometría POINT válida."
+            ),
+        )
+
+    geom = f"LINESTRING({x1} {y1}, {x2} {y2})"
+
+    # 4) Crear instancia ORM con geometría ya calculada
+    tuberia = models.Tuberia(
+        id=data.id,
+        diametro=data.diametro,
+        material=data.material,
+        flujo=data.flujo,
+        estado=data.estado,
+        sedimento=data.sedimento,
+        cota_clave_inicio=data.cota_clave_inicio,
+        cota_batea_inicio=data.cota_batea_inicio,
+        profundidad_clave_inicio=data.profundidad_clave_inicio,
+        profundidad_batea_inicio=data.profundidad_batea_inicio,
+        cota_clave_destino=data.cota_clave_destino,
+        cota_batea_destino=data.cota_batea_destino,
+        profundidad_clave_destino=data.profundidad_clave_destino,
+        profundidad_batea_destino=data.profundidad_batea_destino,
+        grados=data.grados,
+        observaciones=data.observaciones,
+        geometria=geom,
+        id_estructura_inicio=data.id_estructura_inicio,
+        id_estructura_destino=data.id_estructura_destino,
+    )
+
+    db.add(tuberia)
+    db.commit()
+    db.refresh(tuberia)
+
+    return tuberia
+
+
+@app.get("/tuberias/{estructura_id}", response_model=list[schemas.PipeOut])
+def listar_tuberias_por_estructura(
+    estructura_id: str,
+    token: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Lista las tuberías donde la estructura participa como inicio o destino.
+    Solo se devuelven tuberías asociadas a proyectos del usuario.
+    """
+    user = get_user_by_token(db, token)
+
+    # Verificar que la estructura pertenezca a un proyecto del usuario
+    estructura = (
+        db.query(models.EstructuraHidraulica)
+        .join(models.Proyecto, models.EstructuraHidraulica.id_proyecto == models.Proyecto.id)
+        .filter(
+            models.EstructuraHidraulica.id == estructura_id,
+            models.Proyecto.id_usuario == user.id,
+        )
+        .first()
+    )
+    if not estructura:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Estructura no encontrada o no pertenece a proyectos del usuario",
+        )
+
+    proyectos_ids_usuario = {
+        p.id
+        for p in db.query(models.Proyecto)
+        .filter(models.Proyecto.id_usuario == user.id)
+        .all()
+    }
+
+    q = (
+        db.query(models.Tuberia)
+        .join(
+            models.EstructuraHidraulica,
+            models.Tuberia.id_estructura_inicio == models.EstructuraHidraulica.id,
+        )
+        .filter(
+            models.EstructuraHidraulica.id_proyecto.in_(proyectos_ids_usuario),
+            (
+                (models.Tuberia.id_estructura_inicio == estructura_id)
+                | (models.Tuberia.id_estructura_destino == estructura_id)
+            ),
+        )
+    )
+
+    tuberias = q.all()
+
+    return tuberias
+
+

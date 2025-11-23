@@ -1,4 +1,4 @@
-from datetime import date, time
+from datetime import date, time, datetime
 from typing import Optional, List
 from pydantic import BaseModel
 
@@ -170,3 +170,47 @@ class EstructuraHidraulicaUpdate(BaseModel):
     material_rejilla: Optional[str] = None
 
     id_proyecto: Optional[int] = None
+
+
+# ==========================
+#           TUBERÍAS
+# ==========================
+
+class PipeBase(BaseModel):
+    id: str
+
+    diametro: Optional[float] = None
+    material: Optional[str] = None
+    flujo: Optional[str] = None
+    estado: Optional[str] = None
+    sedimento: bool = False
+
+    cota_clave_inicio: Optional[float] = None
+    cota_batea_inicio: Optional[float] = None
+    profundidad_clave_inicio: Optional[float] = None
+    profundidad_batea_inicio: Optional[float] = None
+
+    cota_clave_destino: Optional[float] = None
+    cota_batea_destino: Optional[float] = None
+    profundidad_clave_destino: Optional[float] = None
+    profundidad_batea_destino: Optional[float] = None
+
+    grados: Optional[float] = None
+    observaciones: Optional[str] = None
+
+    id_estructura_inicio: str
+    id_estructura_destino: str
+
+
+class PipeCreate(PipeBase):
+    """Datos que envía la app para crear una tubería."""
+    pass
+
+
+class PipeOut(PipeBase):
+    """Respuesta del backend al crear / listar tuberías."""
+    geometria: Optional[str] = None  # viene de la tabla tuberia
+
+    class Config:
+        from_attributes = True
+

@@ -14,6 +14,10 @@ from sqlalchemy.orm import relationship
 from .database import Base
 
 
+# =====================================
+#               USUARIOS
+# =====================================
+
 class Usuario(Base):
     __tablename__ = "usuario"
 
@@ -28,6 +32,10 @@ class Usuario(Base):
         cascade="all, delete-orphan",
     )
 
+
+# =====================================
+#               PROYECTOS
+# =====================================
 
 class Proyecto(Base):
     __tablename__ = "proyecto"
@@ -54,14 +62,16 @@ class Proyecto(Base):
     )
 
 
+# =====================================
+#      ESTRUCTURA HIDRÁULICA
+# =====================================
+
 class EstructuraHidraulica(Base):
     __tablename__ = "estructura_hidraulica"
 
-    # --- claves y datos básicos ---
     id = Column(String, primary_key=True, index=True)
     tipo = Column(String, nullable=False)  # Pozo / Sumidero
 
-    # geometry en PostGIS; aquí lo manejamos como texto (WKT / GeoJSON) por simplicidad
     geometria = Column(Text, nullable=True)
 
     fecha_inspeccion = Column(Date, nullable=True)
@@ -99,13 +109,89 @@ class EstructuraHidraulica(Base):
     altura_rejilla = Column(Float, nullable=True)
     material_rejilla = Column(Text, nullable=True)
 
-    # FK
+    material_sumidero = Column(Text, nullable=True)
+
     id_proyecto = Column(
         Integer,
         ForeignKey("proyecto.id", ondelete="CASCADE"),
         nullable=False,
     )
 
-    material_sumidero = Column(Text, nullable=True)
-
     proyecto = relationship("Proyecto", back_populates="estructuras_hidraulicas")
+
+    # =============================
+    #     RELACIÓN CON TUBERÍAS
+    # =============================
+    tuberias_inicio = relationship(
+        "Tuberia",
+        back_populates="estructura_inicio",
+        foreign_keys="Tuberia.id_estructura_inicio",
+        cascade="all, delete-orphan",
+    )
+
+    tuberias_destino = relationship(
+        "Tuberia",
+        back_populates="estructura_destino",
+        foreign_keys="Tuberia.id_estructura_destino",
+        cascade="all, delete-orphan",
+    )
+
+
+# =====================================
+#                TUBERÍAS
+# =====================================
+
+class Tuberia(Base):
+    __tablename__ = "tuberia"
+
+    id = Column(String, primary_key=True, index=True)
+
+    # 👉 Geometría de la tubería (LINESTRING en WKT u otro formato)
+    # Debe coincidir con la columna NOT NULL que ya existe en la base de datos
+    geometria = Column(Text, nullable=False)
+
+    diametro = Column(Float, nullable=True)
+    material = Column(Text, nullable=True)
+    flujo = Column(Text, nullable=True)
+    estado = Column(Text, nullable=True)
+    sedimento = Column(Boolean, default=False)
+
+    cota_clave_inicio = Column(Float, nullable=True)
+    cota_batea_inicio = Column(Float, nullable=True)
+    profundidad_clave_inicio = Column(Float, nullable=True)
+    profundidad_batea_inicio = Column(Float, nullable=True)
+
+    cota_clave_destino = Column(Float, nullable=True)
+    cota_batea_destino = Column(Float, nullable=True)
+    profundidad_clave_destino = Column(Float, nullable=True)
+    profundidad_batea_destino = Column(Float, nullable=True)
+
+    grados = Column(Float, nullable=True)
+    observaciones = Column(Text, nullable=True)
+
+    # --------------------------
+    # Relaciones con estructuras
+    # --------------------------
+    id_estructura_inicio = Column(
+        String,
+        ForeignKey("estructura_hidraulica.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    id_estructura_destino = Column(
+        String,
+        ForeignKey("estructura_hidraulica.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    estructura_inicio = relationship(
+        "EstructuraHidraulica",
+        foreign_keys=[id_estructura_inicio],
+        back_populates="tuberias_inicio",
+    )
+
+    estructura_destino = relationship(
+        "EstructuraHidraulica",
+        foreign_keys=[id_estructura_destino],
+        back_populates="tuberias_destino",
+    )
