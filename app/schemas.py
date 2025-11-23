@@ -181,7 +181,7 @@ class PipeBase(BaseModel):
 
     diametro: Optional[float] = None
     material: Optional[str] = None
-    flujo: Optional[str] = None
+    flujo: Optional[bool] = None
     estado: Optional[str] = None
     sedimento: bool = False
 

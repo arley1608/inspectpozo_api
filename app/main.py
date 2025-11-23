@@ -579,6 +579,10 @@ def crear_tuberia(
     La geometría se construye automáticamente como LINESTRING
     entre los POINT de inicio y destino usando ST_AsText(geometria)
     para soportar columnas geometry/WKB.
+
+    Además, la cota clave de inicio y destino se calcula como:
+      cota_clave = cota_estructura - profundidad_clave
+    usando la cota_estructura de cada estructura.
     """
     user = get_user_by_token(db, token)
 
@@ -628,7 +632,21 @@ def crear_tuberia(
 
     geom = f"LINESTRING({x1} {y1}, {x2} {y2})"
 
-    # 4) Crear instancia ORM con geometría ya calculada
+    # 4) Calcular cota clave inicio/destino usando:
+    #    cota_clave = cota_estructura - profundidad_clave
+    cota_clave_inicio_calc = data.cota_clave_inicio
+    if est_inicio.cota_estructura is not None and data.profundidad_clave_inicio is not None:
+        cota_clave_inicio_calc = (
+            est_inicio.cota_estructura - data.profundidad_clave_inicio
+        )
+
+    cota_clave_destino_calc = data.cota_clave_destino
+    if est_dest.cota_estructura is not None and data.profundidad_clave_destino is not None:
+        cota_clave_destino_calc = (
+            est_dest.cota_estructura - data.profundidad_clave_destino
+        )
+
+    # 5) Crear instancia ORM con geometría y cotas ya calculadas
     tuberia = models.Tuberia(
         id=data.id,
         diametro=data.diametro,
@@ -636,11 +654,11 @@ def crear_tuberia(
         flujo=data.flujo,
         estado=data.estado,
         sedimento=data.sedimento,
-        cota_clave_inicio=data.cota_clave_inicio,
+        cota_clave_inicio=cota_clave_inicio_calc,
         cota_batea_inicio=data.cota_batea_inicio,
         profundidad_clave_inicio=data.profundidad_clave_inicio,
         profundidad_batea_inicio=data.profundidad_batea_inicio,
-        cota_clave_destino=data.cota_clave_destino,
+        cota_clave_destino=cota_clave_destino_calc,
         cota_batea_destino=data.cota_batea_destino,
         profundidad_clave_destino=data.profundidad_clave_destino,
         profundidad_batea_destino=data.profundidad_batea_destino,
@@ -709,47 +727,5 @@ def listar_tuberias_por_estructura(
     )
 
     tuberias = q.all()
-
-    return tuberias
-
-
-@app.get("/tuberias/por-estructura/{estructura_id}", response_model=list[schemas.PipeOut])
-def listar_tuberias_salida_por_estructura(
-    estructura_id: str,
-    token: str,
-    db: Session = Depends(get_db),
-):
-    """
-    Devuelve SOLO las tuberías donde esta estructura es el PUNTO DE INICIO
-    (id_estructura_inicio = estructura_id), para usar en el diagrama de flechas.
-    """
-    user = get_user_by_token(db, token)
-
-    # Verificar que la estructura pertenezca a un proyecto del usuario
-    estructura = (
-        db.query(models.EstructuraHidraulica)
-        .join(
-            models.Proyecto,
-            models.EstructuraHidraulica.id_proyecto == models.Proyecto.id,
-        )
-        .filter(
-            models.EstructuraHidraulica.id == estructura_id,
-            models.Proyecto.id_usuario == user.id,
-        )
-        .first()
-    )
-
-    if not estructura:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Estructura no encontrada o no pertenece a proyectos del usuario",
-        )
-
-    # Tuberías donde esta estructura es origen
-    tuberias = (
-        db.query(models.Tuberia)
-        .filter(models.Tuberia.id_estructura_inicio == estructura_id)
-        .all()
-    )
 
     return tuberias

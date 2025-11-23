@@ -153,7 +153,7 @@ class Tuberia(Base):
 
     diametro = Column(Float, nullable=True)
     material = Column(Text, nullable=True)
-    flujo = Column(Text, nullable=True)
+    flujo = Column(Boolean, nullable=True)
     estado = Column(Text, nullable=True)
     sedimento = Column(Boolean, default=False)
 
