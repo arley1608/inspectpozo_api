@@ -568,6 +568,47 @@ def actualizar_estructura_hidraulica(
 #         TUBERÍAS
 # ==========================
 
+# 🔹 NUEVO: obtener siguiente ID global para tubería
+@app.get("/tuberias/next-id")
+def get_next_tuberia_id(
+    token: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Genera el siguiente ID global de tubería con prefijo 'tub' y
+    sufijo numérico incremental (ej: tub0001, tub0002, ...).
+    """
+    user = get_user_by_token(db, token)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token inválido o usuario no encontrado",
+        )
+
+    prefix = "tub"
+    rows = db.query(models.Tuberia.id).all()
+
+    max_num = 0
+    for (tid,) in rows:
+        if not tid:
+            continue
+        tid_lower = tid.lower()
+        if not tid_lower.startswith(prefix):
+          continue
+        try:
+            num_part = tid[len(prefix):]
+            num = int(num_part)
+            if num > max_num:
+                max_num = num
+        except (IndexError, ValueError):
+            continue
+
+    next_num = max_num + 1
+    new_id = f"{prefix}{next_num:04d}"
+
+    return {"id": new_id}
+
+
 @app.post("/tuberias/", response_model=schemas.PipeOut)
 def crear_tuberia(
     data: schemas.PipeCreate,
@@ -580,13 +621,35 @@ def crear_tuberia(
     entre los POINT de inicio y destino usando ST_AsText(geometria)
     para soportar columnas geometry/WKB.
 
-    Además, la cota clave de inicio y destino se calcula como:
-      cota_clave = cota_estructura - profundidad_clave
-    usando la cota_estructura de cada estructura.
+    Además:
+      - El ID de la tubería se genera automáticamente como 'tubXXXX'
+        de forma incremental global.
+      - La cota clave de inicio y destino se calcula como:
+          cota_clave = cota_estructura - profundidad_clave
     """
     user = get_user_by_token(db, token)
 
-    # 1) Obtener estructuras de inicio y destino
+    # 1) Generar ID automático para la tubería (ignora data.id)
+    prefix = "tub"
+    rows = db.query(models.Tuberia.id).all()
+    max_num = 0
+    for (tid,) in rows:
+        if not tid:
+            continue
+        tid_lower = tid.lower()
+        if not tid_lower.startswith(prefix):
+            continue
+        try:
+            num_part = tid[len(prefix):]
+            num = int(num_part)
+            if num > max_num:
+                max_num = num
+        except (IndexError, ValueError):
+            continue
+    next_num = max_num + 1
+    new_pipe_id = f"{prefix}{next_num:04d}"
+
+    # 2) Obtener estructuras de inicio y destino
     est_inicio = db.query(models.EstructuraHidraulica).get(
         data.id_estructura_inicio
     )
@@ -600,7 +663,7 @@ def crear_tuberia(
             detail="Estructura de inicio o destino no encontrada",
         )
 
-    # 2) Verificar que ambas estructuras pertenezcan a proyectos del usuario
+    # 3) Verificar que ambas estructuras pertenezcan a proyectos del usuario
     proyectos_ids_usuario = {
         p.id
         for p in db.query(models.Proyecto)
@@ -617,7 +680,7 @@ def crear_tuberia(
             detail="Las estructuras no pertenecen a proyectos del usuario",
         )
 
-    # 3) Construir geometría de la tubería (LINESTRING) a partir de las geometrías de las estructuras
+    # 4) Construir geometría de la tubería (LINESTRING) a partir de las geometrías de las estructuras
     try:
         x1, y1 = _get_point_from_structure(db, est_inicio.id)
         x2, y2 = _get_point_from_structure(db, est_dest.id)
@@ -632,7 +695,7 @@ def crear_tuberia(
 
     geom = f"LINESTRING({x1} {y1}, {x2} {y2})"
 
-    # 4) Calcular cota clave inicio/destino usando:
+    # 5) Calcular cota clave inicio/destino usando:
     #    cota_clave = cota_estructura - profundidad_clave
     cota_clave_inicio_calc = data.cota_clave_inicio
     if est_inicio.cota_estructura is not None and data.profundidad_clave_inicio is not None:
@@ -646,9 +709,9 @@ def crear_tuberia(
             est_dest.cota_estructura - data.profundidad_clave_destino
         )
 
-    # 5) Crear instancia ORM con geometría y cotas ya calculadas
+    # 6) Crear instancia ORM con geometría, cotas calculadas e ID generado
     tuberia = models.Tuberia(
-        id=data.id,
+        id=new_pipe_id,  # 👈 usamos el ID generado
         diametro=data.diametro,
         material=data.material,
         flujo=data.flujo,
@@ -771,122 +834,3 @@ def eliminar_tuberia(
     db.commit()
 
     return {"ok": True}
-
-
-@app.put("/tuberias/{tuberia_id}", response_model=schemas.PipeOut)
-def actualizar_tuberia(
-    tuberia_id: str,
-    data: schemas.PipeUpdate,
-    token: str,
-    db: Session = Depends(get_db),
-):
-    """
-    Actualiza una tubería existente. Mantiene la lógica de cálculo de:
-      cota_clave_inicio = cota_estructura_inicio - profundidad_clave_inicio
-      cota_clave_destino = cota_estructura_destino - profundidad_clave_destino
-    siempre que existan cota_estructura y profundidad_clave;
-    en caso contrario, usa los valores enviados en el body.
-    """
-    user = get_user_by_token(db, token)
-
-    # Verificar que la tubería pertenezca a un proyecto del usuario
-    tuberia = (
-        db.query(models.Tuberia)
-        .join(
-            models.EstructuraHidraulica,
-            models.Tuberia.id_estructura_inicio == models.EstructuraHidraulica.id,
-        )
-        .join(
-            models.Proyecto,
-            models.EstructuraHidraulica.id_proyecto == models.Proyecto.id,
-        )
-        .filter(
-            models.Tuberia.id == tuberia_id,
-            models.Proyecto.id_usuario == user.id,
-        )
-        .first()
-    )
-
-    if not tuberia:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Tubería no encontrada o no pertenece a proyectos del usuario",
-        )
-
-    # Estructuras de inicio y destino para recálculo de cotas
-    est_inicio = db.query(models.EstructuraHidraulica).get(
-        tuberia.id_estructura_inicio
-    )
-    est_dest = db.query(models.EstructuraHidraulica).get(
-        tuberia.id_estructura_destino
-    )
-
-    # --- Actualizar campos simples ---
-
-    if data.diametro is not None:
-        tuberia.diametro = data.diametro
-    if data.material is not None:
-        tuberia.material = data.material
-    if data.flujo is not None:
-        tuberia.flujo = data.flujo
-    if data.estado is not None:
-        tuberia.estado = data.estado
-    if data.sedimento is not None:
-        tuberia.sedimento = data.sedimento
-
-    # --- Inicio: profundidades y cotas ---
-
-    if data.profundidad_clave_inicio is not None:
-        tuberia.profundidad_clave_inicio = data.profundidad_clave_inicio
-    if data.profundidad_batea_inicio is not None:
-        tuberia.profundidad_batea_inicio = data.profundidad_batea_inicio
-
-    if data.cota_batea_inicio is not None:
-        tuberia.cota_batea_inicio = data.cota_batea_inicio
-
-    # cota_clave_inicio: preferimos recálculo si hay cota_estructura y profundidad
-    if (
-        est_inicio is not None
-        and est_inicio.cota_estructura is not None
-        and tuberia.profundidad_clave_inicio is not None
-    ):
-        tuberia.cota_clave_inicio = (
-            est_inicio.cota_estructura - tuberia.profundidad_clave_inicio
-        )
-    elif data.cota_clave_inicio is not None:
-        tuberia.cota_clave_inicio = data.cota_clave_inicio
-
-    # --- Destino: profundidades y cotas ---
-
-    if data.profundidad_clave_destino is not None:
-        tuberia.profundidad_clave_destino = data.profundidad_clave_destino
-    if data.profundidad_batea_destino is not None:
-        tuberia.profundidad_batea_destino = data.profundidad_batea_destino
-
-    if data.cota_batea_destino is not None:
-        tuberia.cota_batea_destino = data.cota_batea_destino
-
-    if (
-        est_dest is not None
-        and est_dest.cota_estructura is not None
-        and tuberia.profundidad_clave_destino is not None
-    ):
-        tuberia.cota_clave_destino = (
-            est_dest.cota_estructura - tuberia.profundidad_clave_destino
-        )
-    elif data.cota_clave_destino is not None:
-        tuberia.cota_clave_destino = data.cota_clave_destino
-
-    # --- Otros campos ---
-
-    if data.grados is not None:
-        tuberia.grados = data.grados
-    if data.observaciones is not None:
-        tuberia.observaciones = data.observaciones
-
-    # Nota: no se modifican id_estructura_inicio, id_estructura_destino ni geometría.
-
-    db.commit()
-    db.refresh(tuberia)
-
-    return tuberia
