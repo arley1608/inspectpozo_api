@@ -72,6 +72,7 @@ class EstructuraHidraulica(Base):
     id = Column(String, primary_key=True, index=True)
     tipo = Column(String, nullable=False)  # Pozo / Sumidero
 
+    # Puede ser WKT o una columna geometry en PostGIS (la usamos vía ST_AsText en el backend)
     geometria = Column(Text, nullable=True)
 
     fecha_inspeccion = Column(Date, nullable=True)
@@ -122,18 +123,18 @@ class EstructuraHidraulica(Base):
     # =============================
     #     RELACIÓN CON TUBERÍAS
     # =============================
+    # No usamos delete-orphan aquí porque una tubería tiene dos FKs a EstructuraHidraulica.
+    # El borrado se maneja con ondelete="CASCADE" en los ForeignKey de Tuberia.
     tuberias_inicio = relationship(
         "Tuberia",
         back_populates="estructura_inicio",
         foreign_keys="Tuberia.id_estructura_inicio",
-        cascade="all, delete-orphan",
     )
 
     tuberias_destino = relationship(
         "Tuberia",
         back_populates="estructura_destino",
         foreign_keys="Tuberia.id_estructura_destino",
-        cascade="all, delete-orphan",
     )
 
 
@@ -146,7 +147,7 @@ class Tuberia(Base):
 
     id = Column(String, primary_key=True, index=True)
 
-    # 👉 Geometría de la tubería (LINESTRING en WKT u otro formato)
+    # Geometría de la tubería (LINESTRING en WKT u otro formato)
     # Debe coincidir con la columna NOT NULL que ya existe en la base de datos
     geometria = Column(Text, nullable=False)
 

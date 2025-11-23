@@ -713,3 +713,43 @@ def listar_tuberias_por_estructura(
     return tuberias
 
 
+@app.get("/tuberias/por-estructura/{estructura_id}", response_model=list[schemas.PipeOut])
+def listar_tuberias_salida_por_estructura(
+    estructura_id: str,
+    token: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Devuelve SOLO las tuberías donde esta estructura es el PUNTO DE INICIO
+    (id_estructura_inicio = estructura_id), para usar en el diagrama de flechas.
+    """
+    user = get_user_by_token(db, token)
+
+    # Verificar que la estructura pertenezca a un proyecto del usuario
+    estructura = (
+        db.query(models.EstructuraHidraulica)
+        .join(
+            models.Proyecto,
+            models.EstructuraHidraulica.id_proyecto == models.Proyecto.id,
+        )
+        .filter(
+            models.EstructuraHidraulica.id == estructura_id,
+            models.Proyecto.id_usuario == user.id,
+        )
+        .first()
+    )
+
+    if not estructura:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Estructura no encontrada o no pertenece a proyectos del usuario",
+        )
+
+    # Tuberías donde esta estructura es origen
+    tuberias = (
+        db.query(models.Tuberia)
+        .filter(models.Tuberia.id_estructura_inicio == estructura_id)
+        .all()
+    )
+
+    return tuberias
