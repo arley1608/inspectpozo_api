@@ -1,5 +1,5 @@
 from datetime import date, time, datetime
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 
 # ==========================
@@ -241,3 +241,19 @@ class PipeUpdate(BaseModel):
 
     grados: Optional[float] = None
     observaciones: Optional[str] = None
+
+
+# ==========================
+#      MAPA / CONEXIONES
+# ==========================
+
+class MapStructureOut(BaseModel):
+    id: str
+    tipo: Optional[str] = None
+    lat: float
+    lon: float
+
+
+class MapPipeOut(BaseModel):
+    id: str
+    geojson: Dict[str, Any]

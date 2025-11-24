@@ -10,8 +10,9 @@ from fastapi import (
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from typing import Tuple
+from typing import Tuple, List, Dict, Any
 import hashlib
+import json
 
 from .database import SessionLocal, engine, Base
 from . import models, schemas
@@ -21,8 +22,8 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="InspectPozo API",
-    version="2.1.0",
-    description="Backend para app InspectPozo (usuarios, proyectos, estructuras hidráulicas).",
+    version="2.2.0",
+    description="Backend para app InspectPozo (usuarios, proyectos, estructuras hidráulicas y tuberías).",
 )
 
 
@@ -69,6 +70,33 @@ def _parse_point_wkt(wkt: str) -> Tuple[float, float]:
     x = float(parts[0])
     y = float(parts[1])
     return x, y
+
+
+def _parse_linestring_wkt(wkt: str) -> List[List[float]]:
+    """
+    Parsea un WKT tipo 'LINESTRING(x1 y1, x2 y2, ...)' y devuelve
+    [[x1, y1], [x2, y2], ...].
+    """
+    if not wkt:
+        return []
+
+    txt = wkt.strip()
+    if not txt.lower().startswith("linestring(") or not txt.endswith(")"):
+        return []
+
+    inner = txt[txt.find("(") + 1: -1].strip()
+    parts = inner.split(",")
+
+    coords: List[List[float]] = []
+    for part in parts:
+        tokens = part.strip().split()
+        if len(tokens) != 2:
+            continue
+        x = float(tokens[0])
+        y = float(tokens[1])
+        coords.append([x, y])
+
+    return coords
 
 
 def _get_point_from_structure(db: Session, estructura_id: str) -> Tuple[float, float]:
@@ -594,7 +622,7 @@ def get_next_tuberia_id(
             continue
         tid_lower = tid.lower()
         if not tid_lower.startswith(prefix):
-          continue
+            continue
         try:
             num_part = tid[len(prefix):]
             num = int(num_part)
@@ -611,7 +639,7 @@ def get_next_tuberia_id(
 
 @app.post("/tuberias/", response_model=schemas.PipeOut)
 def crear_tuberia(
-    data: schemas.PipeCreate,
+    data: schemas.PipeCreate,  # id se ignora, se genera en el backend
     token: str,
     db: Session = Depends(get_db),
 ):
@@ -794,6 +822,86 @@ def listar_tuberias_por_estructura(
     return tuberias
 
 
+@app.put("/tuberias/{tuberia_id}", response_model=schemas.PipeOut)
+def actualizar_tuberia(
+    tuberia_id: str,
+    token: str,
+    data: schemas.PipeUpdate,
+    db: Session = Depends(get_db),
+):
+    """
+    Actualiza una tubería existente. No permite cambiar:
+    - id
+    - id_estructura_inicio
+    - id_estructura_destino
+    - geometría
+    """
+    user = get_user_by_token(db, token)
+
+    tuberia = (
+        db.query(models.Tuberia)
+        .join(
+            models.EstructuraHidraulica,
+            models.Tuberia.id_estructura_inicio == models.EstructuraHidraulica.id,
+        )
+        .join(
+            models.Proyecto,
+            models.EstructuraHidraulica.id_proyecto == models.Proyecto.id,
+        )
+        .filter(
+            models.Tuberia.id == tuberia_id,
+            models.Proyecto.id_usuario == user.id,
+        )
+        .first()
+    )
+
+    if not tuberia:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tubería no encontrada o no pertenece a proyectos del usuario",
+        )
+
+    # Actualizar campos permitidos
+    if data.diametro is not None:
+        tuberia.diametro = data.diametro
+    if data.material is not None:
+        tuberia.material = data.material
+    if data.flujo is not None:
+        tuberia.flujo = data.flujo
+    if data.estado is not None:
+        tuberia.estado = data.estado
+    if data.sedimento is not None:
+        tuberia.sedimento = data.sedimento
+
+    if data.cota_clave_inicio is not None:
+        tuberia.cota_clave_inicio = data.cota_clave_inicio
+    if data.cota_batea_inicio is not None:
+        tuberia.cota_batea_inicio = data.cota_batea_inicio
+    if data.profundidad_clave_inicio is not None:
+        tuberia.profundidad_clave_inicio = data.profundidad_clave_inicio
+    if data.profundidad_batea_inicio is not None:
+        tuberia.profundidad_batea_inicio = data.profundidad_batea_inicio
+
+    if data.cota_clave_destino is not None:
+        tuberia.cota_clave_destino = data.cota_clave_destino
+    if data.cota_batea_destino is not None:
+        tuberia.cota_batea_destino = data.cota_batea_destino
+    if data.profundidad_clave_destino is not None:
+        tuberia.profundidad_clave_destino = data.profundidad_clave_destino
+    if data.profundidad_batea_destino is not None:
+        tuberia.profundidad_batea_destino = data.profundidad_batea_destino
+
+    if data.grados is not None:
+        tuberia.grados = data.grados
+    if data.observaciones is not None:
+        tuberia.observaciones = data.observaciones
+
+    db.commit()
+    db.refresh(tuberia)
+
+    return tuberia
+
+
 @app.delete("/tuberias/{tuberia_id}")
 def eliminar_tuberia(
     tuberia_id: str,
@@ -805,8 +913,6 @@ def eliminar_tuberia(
     """
     user = get_user_by_token(db, token)
 
-    # Buscar la tubería y verificar que la estructura de inicio
-    # esté en un proyecto del usuario
     tuberia = (
         db.query(models.Tuberia)
         .join(
@@ -834,3 +940,95 @@ def eliminar_tuberia(
     db.commit()
 
     return {"ok": True}
+
+
+# ==========================
+#      MAPA / CONEXIONES
+# ==========================
+
+@app.get("/proyectos/{proyecto_id}/map-data")
+def get_project_map_data(
+    proyecto_id: int,
+    token: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Devuelve la información necesaria para pintar el mapa:
+    - structures: lista de {id, tipo, lat, lon}
+    - pipes: lista de {id, id_estructura_inicio, id_estructura_destino, coords}
+      donde coords = [[lon, lat], ...]
+    Usando geometría almacenada en PostGIS.
+    Se asume que geometria ya está en coordenadas WGS84 (lon, lat).
+    """
+    user = get_user_by_token(db, token)
+
+    proyecto = (
+        db.query(models.Proyecto)
+        .filter(
+            models.Proyecto.id == proyecto_id,
+            models.Proyecto.id_usuario == user.id,
+        )
+        .first()
+    )
+    if not proyecto:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Proyecto no encontrado o no pertenece al usuario",
+        )
+
+    # ----- Estructuras: POINT -> lat/lon -----
+    estructuras_rows = db.execute(
+        text(
+            """
+            SELECT
+              id,
+              tipo,
+              ST_Y(geometria) AS lat,
+              ST_X(geometria) AS lon
+            FROM estructura_hidraulica
+            WHERE id_proyecto = :pid
+              AND geometria IS NOT NULL
+            """
+        ),
+        {"pid": proyecto_id},
+    ).mappings().all()
+
+    structures: List[Dict[str, Any]] = [dict(r) for r in estructuras_rows]
+
+    # ----- Tuberías: LINESTRING -> coords [[lon, lat], ...] -----
+    pipes_rows = db.execute(
+        text(
+            """
+            SELECT
+              t.id,
+              t.id_estructura_inicio,
+              t.id_estructura_destino,
+              ST_AsText(t.geometria) AS wkt
+            FROM tuberia t
+            JOIN estructura_hidraulica e1
+              ON t.id_estructura_inicio = e1.id
+            WHERE e1.id_proyecto = :pid
+              AND t.geometria IS NOT NULL
+            """
+        ),
+        {"pid": proyecto_id},
+    ).mappings().all()
+
+    pipes: List[Dict[str, Any]] = []
+    for row in pipes_rows:
+        coords = _parse_linestring_wkt(row["wkt"])
+        if not coords:
+            continue
+        pipes.append(
+            {
+                "id": row["id"],
+                "id_estructura_inicio": row["id_estructura_inicio"],
+                "id_estructura_destino": row["id_estructura_destino"],
+                "coords": coords,  # [[lon, lat], ...]
+            }
+        )
+
+    return {
+        "structures": structures,
+        "pipes": pipes,
+    }
