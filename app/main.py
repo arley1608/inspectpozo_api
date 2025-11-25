@@ -13,6 +13,9 @@ from sqlalchemy import text
 from typing import Tuple, List, Dict, Any
 import hashlib
 import json
+import shutil
+from pathlib import Path
+import base64  # para codificar/decodificar imágenes en base64
 
 from .database import SessionLocal, engine, Base
 from . import models, schemas
@@ -25,6 +28,11 @@ app = FastAPI(
     version="2.2.0",
     description="Backend para app InspectPozo (usuarios, proyectos, estructuras hidráulicas y tuberías).",
 )
+
+# Directorio donde se guardarán las fotos de registro (si en algún momento decides usar disco)
+BASE_DIR = Path(__file__).resolve().parent
+PHOTO_UPLOAD_DIR = BASE_DIR / "uploads" / "fotos"
+PHOTO_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ==========================
@@ -60,9 +68,7 @@ def _parse_point_wkt(wkt: str) -> Tuple[float, float]:
     if not txt.lower().startswith("point(") or not txt.endswith(")"):
         raise ValueError(f"Formato WKT no soportado: {txt}")
 
-    # contenido entre paréntesis
     inner = txt[txt.find("(") + 1: -1].strip()
-    # Admitimos separador coma o espacio
     parts = inner.replace(",", " ").split()
     if len(parts) != 2:
         raise ValueError(f"POINT debe tener 2 coordenadas: {inner}")
@@ -485,7 +491,6 @@ def actualizar_estructura_hidraulica(
 ):
     user = get_user_by_token(db, token)
 
-    # Buscar la estructura y verificar que su proyecto pertenezca al usuario
     estructura = (
         db.query(models.EstructuraHidraulica)
         .join(models.Proyecto, models.EstructuraHidraulica.id_proyecto == models.Proyecto.id)
@@ -501,8 +506,6 @@ def actualizar_estructura_hidraulica(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Estructura no encontrada o no pertenece al usuario",
         )
-
-    # ---- Actualizar TODOS los campos excepto el id ----
 
     if data.tipo is not None:
         estructura.tipo = data.tipo
@@ -570,7 +573,6 @@ def actualizar_estructura_hidraulica(
         estructura.material_rejilla = data.material_rejilla
 
     if data.id_proyecto is not None:
-        # Validar que el nuevo proyecto también sea del mismo usuario
         proyecto_nuevo = (
             db.query(models.Proyecto)
             .filter(
@@ -596,7 +598,6 @@ def actualizar_estructura_hidraulica(
 #         TUBERÍAS
 # ==========================
 
-# 🔹 NUEVO: obtener siguiente ID global para tubería
 @app.get("/tuberias/next-id")
 def get_next_tuberia_id(
     token: str,
@@ -739,7 +740,7 @@ def crear_tuberia(
 
     # 6) Crear instancia ORM con geometría, cotas calculadas e ID generado
     tuberia = models.Tuberia(
-        id=new_pipe_id,  # 👈 usamos el ID generado
+        id=new_pipe_id,  # usamos el ID generado
         diametro=data.diametro,
         material=data.material,
         flujo=data.flujo,
@@ -1032,3 +1033,196 @@ def get_project_map_data(
         "structures": structures,
         "pipes": pipes,
     }
+
+
+# ==========================
+#      REGISTRO FOTOGRÁFICO
+# ==========================
+
+@app.post("/registros-fotograficos/")
+async def crear_registro_fotografico(
+    token: str,
+    id_estructura: str = Form(...),
+    tipo: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """
+    Crea o actualiza un registro fotográfico para una estructura.
+
+    - token: se envía como query param.
+    - id_estructura: ID de la estructura hidráulica (Form).
+    - tipo: 'panoramica' | 'inicial' | 'abierto' | 'final' (Form).
+    - file: archivo de imagen (multipart).
+
+    Se guarda la imagen en columna bytea (campo 'imagen').
+    El ID del registro se define como: <id_estructura>-<tipo>.
+    La API devuelve la imagen codificada en base64.
+    """
+    user = get_user_by_token(db, token)
+
+    # Verificar que la estructura exista y pertenezca a un proyecto del usuario
+    estructura = (
+        db.query(models.EstructuraHidraulica)
+        .join(
+            models.Proyecto,
+            models.EstructuraHidraulica.id_proyecto == models.Proyecto.id,
+        )
+        .filter(
+            models.EstructuraHidraulica.id == id_estructura,
+            models.Proyecto.id_usuario == user.id,
+        )
+        .first()
+    )
+    if not estructura:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Estructura no encontrada o no pertenece a proyectos del usuario",
+        )
+
+    tipo_norm = tipo.strip().lower()
+    tipos_validos = {"panoramica", "inicial", "abierto", "final"}
+    if tipo_norm not in tipos_validos:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tipo de fotografía inválido. Debe ser: panoramica, inicial, abierto o final.",
+        )
+
+    if not file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Archivo de imagen inválido.",
+        )
+
+    # Leer contenido del archivo como bytes (para columna bytea)
+    contenido = await file.read()
+
+    # ID deseado: <id_estructura>-<tipo>
+    id_registro = f"{id_estructura}-{tipo_norm}"
+
+    # Buscar si ya existe un registro para (id_estructura, tipo)
+    existing = db.execute(
+        text(
+            """
+            SELECT id
+            FROM registro_fotografico
+            WHERE id_estructura = :id_estructura
+              AND tipo = :tipo
+            LIMIT 1
+            """
+        ),
+        {"id_estructura": id_estructura, "tipo": tipo_norm},
+    ).first()
+
+    if existing:
+        # Actualizar registro existente (imagen)
+        db.execute(
+            text(
+                """
+                UPDATE registro_fotografico
+                SET imagen = :imagen
+                WHERE id = :id
+                """
+            ),
+            {"imagen": contenido, "id": existing.id},
+        )
+        db.commit()
+
+        row = db.execute(
+            text(
+                """
+                SELECT id, id_estructura, tipo, imagen
+                FROM registro_fotografico
+                WHERE id = :id
+                """
+            ),
+            {"id": existing.id},
+        ).mappings().first()
+    else:
+        # Insertar nuevo registro con ID <id_estructura>-<tipo>
+        row = db.execute(
+            text(
+                """
+                INSERT INTO registro_fotografico (id, id_estructura, tipo, imagen)
+                VALUES (:id, :id_estructura, :tipo, :imagen)
+                RETURNING id, id_estructura, tipo, imagen
+                """
+            ),
+            {
+                "id": id_registro,
+                "id_estructura": id_estructura,
+                "tipo": tipo_norm,
+                "imagen": contenido,
+            },
+        ).mappings().first()
+        db.commit()
+
+    # row["imagen"] es bytea (bytes o memoryview)
+    imagen_bytes = bytes(row["imagen"])
+    imagen_b64 = base64.b64encode(imagen_bytes).decode("ascii")
+
+    return {
+        "id": row["id"],
+        "id_estructura": row["id_estructura"],
+        "tipo": row["tipo"],
+        "imagen": imagen_b64,
+    }
+
+
+@app.get("/estructuras/{estructura_id}/registros-fotograficos")
+def listar_registros_fotograficos(
+    estructura_id: str,
+    token: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Lista los registros fotográficos de una estructura (si pertenece a proyectos del usuario).
+
+    La tabla en BD usa la columna 'imagen' como bytea.
+    La API devuelve 'imagen' codificada en base64.
+    """
+    user = get_user_by_token(db, token)
+
+    estructura = (
+        db.query(models.EstructuraHidraulica)
+        .join(
+            models.Proyecto,
+            models.EstructuraHidraulica.id_proyecto == models.Proyecto.id,
+        )
+        .filter(
+            models.EstructuraHidraulica.id == estructura_id,
+            models.Proyecto.id_usuario == user.id,
+        )
+        .first()
+    )
+    if not estructura:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Estructura no encontrada o no pertenece a proyectos del usuario",
+        )
+
+    rows = db.execute(
+        text(
+            """
+            SELECT id, id_estructura, tipo, imagen
+            FROM registro_fotografico
+            WHERE id_estructura = :id_estructura
+            """
+        ),
+        {"id_estructura": estructura_id},
+    ).mappings().all()
+
+    resultados = []
+    for r in rows:
+        imagen_bytes = bytes(r["imagen"])
+        imagen_b64 = base64.b64encode(imagen_bytes).decode("ascii")
+        resultados.append(
+            {
+                "id": r["id"],
+                "id_estructura": r["id_estructura"],
+                "tipo": r["tipo"],
+                "imagen": imagen_b64,
+            }
+        )
+
+    return resultados

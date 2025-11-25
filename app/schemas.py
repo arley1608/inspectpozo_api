@@ -1,6 +1,7 @@
-from datetime import date, time, datetime
+from datetime import date, time
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
+from typing import Optional
 
 # ==========================
 #         AUTH / USERS
@@ -257,3 +258,20 @@ class MapStructureOut(BaseModel):
 class MapPipeOut(BaseModel):
     id: str
     geojson: Dict[str, Any]
+
+
+# ==========================
+#    REGISTRO FOTOGRÁFICO
+# ==========================
+
+class RegistroFotograficoBase(BaseModel):
+    id_estructura: str
+    tipo: str           # 'panoramica' | 'inicial' | 'abierto' | 'final'
+    imagen: Optional[bytes]         
+
+
+class RegistroFotograficoOut(RegistroFotograficoBase):
+    id: int
+
+    class Config:
+        from_attributes = True

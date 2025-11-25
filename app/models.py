@@ -8,8 +8,12 @@ from sqlalchemy import (
     Boolean,
     Float,
     ForeignKey,
+    DateTime,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
+from sqlalchemy import LargeBinary
 
 from .database import Base
 
@@ -137,6 +141,15 @@ class EstructuraHidraulica(Base):
         foreign_keys="Tuberia.id_estructura_destino",
     )
 
+    # =============================
+    #   RELACIÓN CON REG. FOTOGRÁFICO
+    # =============================
+    registros_fotograficos = relationship(
+        "RegistroFotografico",
+        back_populates="estructura",
+        cascade="all, delete-orphan",
+    )
+
 
 # =====================================
 #                TUBERÍAS
@@ -195,4 +208,42 @@ class Tuberia(Base):
         "EstructuraHidraulica",
         foreign_keys=[id_estructura_destino],
         back_populates="tuberias_destino",
+    )
+
+
+# =====================================
+#         REGISTRO FOTOGRÁFICO
+# =====================================
+
+class RegistroFotografico(Base):
+    __tablename__ = "registro_fotografico"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # FK a la estructura hidráulica (id es String)
+    id_estructura = Column(
+        String,
+        ForeignKey("estructura_hidraulica.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Tipo de foto: panoramica / inicial / abierto / final
+    tipo = Column(String(20), nullable=False, index=True)
+
+    # Ruta o nombre del archivo en el servidor (relativa a la app)
+    imagen = Column(LargeBinary, nullable=False)
+
+
+    estructura = relationship(
+        "EstructuraHidraulica",
+        back_populates="registros_fotograficos",
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "id_estructura",
+            "tipo",
+            name="uq_registro_foto_estructura_tipo",
+        ),
     )
