@@ -7,6 +7,7 @@ from fastapi import (
     File,
     Form,
 )
+
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -430,6 +431,12 @@ def listar_estructuras_por_proyecto(
     id_proyecto: int,
     db: Session = Depends(get_db),
 ):
+    """
+    Lista estructuras de un proyecto.
+    Aquí devolvemos la geometría como WKT en el campo 'geometria'
+    usando ST_AsText, para que el frontend pueda parsear lon/lat.
+    No se modifica el resto de campos.
+    """
     user = get_user_by_token(db, token)
 
     proyecto = (
@@ -447,12 +454,49 @@ def listar_estructuras_por_proyecto(
             detail="Proyecto no encontrado o no pertenece al usuario",
         )
 
-    estructuras = (
-        db.query(models.EstructuraHidraulica)
-        .filter(models.EstructuraHidraulica.id_proyecto == id_proyecto)
-        .all()
-    )
+    filas = db.execute(
+        text(
+            """
+            SELECT
+              e.id,
+              e.tipo,
+              ST_AsText(e.geometria) AS geometria,
+              e.fecha_inspeccion,
+              e.hora_inspeccion,
+              e.clima_inspeccion,
+              e.tipo_via,
+              e.tipo_sistema,
+              e.material,
+              e.cono_reduccion,
+              e.altura_cono,
+              e.profundidad_pozo,
+              e.diametro_camara,
+              e.sedimentacion,
+              e.cobertura_tuberia_salida,
+              e.deposito_predomina,
+              e.flujo_represado,
+              e.nivel_cubre_cotasalida,
+              e.cota_estructura,
+              e.condiciones_investiga,
+              e.observaciones,
+              e.tipo_sumidero,
+              e.ancho_sumidero,
+              e.largo_sumidero,
+              e.altura_sumidero,
+              e.material_sumidero,
+              e.ancho_rejilla,
+              e.largo_rejilla,
+              e.altura_rejilla,
+              e.material_rejilla,
+              e.id_proyecto
+            FROM estructura_hidraulica e
+            WHERE e.id_proyecto = :pid
+            """
+        ),
+        {"pid": id_proyecto},
+    ).mappings().all()
 
+    estructuras: List[Dict[str, Any]] = [dict(r) for r in filas]
     return estructuras
 
 
